@@ -55,6 +55,9 @@ button{cursor:pointer;border:0;background:none}
 #status{font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;background:var(--scrim);padding:5px 12px;border-radius:99px;display:flex;align-items:center;gap:8px}
 #status .dot{width:9px;height:9px;border-radius:50%;background:var(--rec);display:none}
 body.rec #status .dot{display:block;animation:blink 1s steps(2) infinite}
+#meter{width:34px;height:6px;border-radius:3px;background:rgba(255,255,255,.22);overflow:hidden}
+#meter i{display:block;height:100%;width:0;background:#8fd48a}
+#meter.off{background:var(--rec)}
 @keyframes blink{50%{opacity:.2}}
 .quick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .pill{display:flex;align-items:center;background:var(--scrim);border-radius:99px;overflow:hidden}
@@ -132,7 +135,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div id="count" hidden></div>
 
   <div id="controls">
-    <div id="status"><span class="dot"></span><span id="statusText">0:00</span></div>
+    <div id="status"><span class="dot"></span><span id="statusText">0:00</span><span id="meter" title="Microphone level"><i></i></span></div>
     <div class="quick hide-rec-not">
       <div class="pill" title="Reading speed">
         <button id="wpmDown" aria-label="Slower">−</button><output id="wpmOut">150 wpm</output><button id="wpmUp" aria-label="Faster">+</button>
@@ -318,8 +321,40 @@ async function startCamera(){
   }
   video.srcObject = camStream;
   try { await video.play(); } catch {}
+  setupAudio();
   canvas.classList.toggle('mirror', S.facing === 'user');
   return true;
+}
+
+// Mic goes through Web Audio: Safari often records no sound when a raw mic track is added to a canvas stream.
+let audioCtx = null, micSrc = null, micDest = null, analyser = null, level = 0;
+const meterBuf = new Uint8Array(512);
+function setupAudio(){
+  const tracks = camStream ? camStream.getAudioTracks() : [];
+  $('#meter').classList.toggle('off', !tracks.length);
+  if (!tracks.length) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = audioCtx || new AC();
+    micDest = micDest || audioCtx.createMediaStreamDestination();
+    analyser = analyser || Object.assign(audioCtx.createAnalyser(), { fftSize: 512 });
+    if (micSrc) micSrc.disconnect();
+    micSrc = audioCtx.createMediaStreamSource(new MediaStream(tracks));
+    micSrc.connect(analyser); micSrc.connect(micDest);
+    audioCtx.resume().catch(() => {});
+  } catch { micDest = null; analyser = null; }
+}
+function recAudioTracks(){
+  if (micDest && audioCtx && audioCtx.state === 'running') return micDest.stream.getAudioTracks();
+  return camStream.getAudioTracks();
+}
+function drawMeter(){
+  if (!analyser) return;
+  analyser.getByteTimeDomainData(meterBuf);
+  let peak = 0;
+  for (let i = 0; i < meterBuf.length; i++) peak = Math.max(peak, Math.abs(meterBuf[i] - 128));
+  level = Math.max(peak / 128, level * 0.9);
+  $('#meter i').style.width = Math.min(100, level * 250) + '%';
 }
 
 function drawFrame(){
@@ -336,6 +371,7 @@ function drawFrame(){
 function loop(now){
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
   drawFrame();
+  drawMeter();
   if (scrolling && !dragging) {
     y += (textH / words) * (S.wpm / 60) * dt;
     if (y >= textH) {
@@ -361,6 +397,7 @@ async function onRecButton(){
   if (mode === 'rec') return stopRec();
   if (mode === 'count') { mode = 'idle'; body.classList.remove('count'); $('#count').hidden = true; return; }
   if (!camStream) return;
+  if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume().catch(() => {}); // called inside the tap
   closeSheet();
   resetScroll();
   if (+S.countdown > 0) {
@@ -379,7 +416,7 @@ function startRec(){
   const mime = pickMime();
   if (mime === null) { alertMsg('This browser cannot record video. Use Safari on iPhone or Chrome on Android.'); mode = 'idle'; return; }
   const out = canvas.captureStream(30);
-  camStream.getAudioTracks().forEach(t => out.addTrack(t));
+  recAudioTracks().forEach(t => out.addTrack(t));
   try {
     recorder = new MediaRecorder(out, Object.assign(mime ? { mimeType: mime } : {}, { videoBitsPerSecond: S.res == 720 ? 5e6 : 8e6, audioBitsPerSecond: 128e3 }));
   } catch (e) { alertMsg('Recording failed to start: ' + e.message); mode = 'idle'; return; }
@@ -391,7 +428,7 @@ function startRec(){
     lastBlob = new Blob(chunks, { type });
     showReview((performance.now() - recStart) / 1000);
   };
-  recorder.start(1000);
+  recorder.start();
   recStart = performance.now();
   mode = 'rec'; body.classList.add('rec');
   $('#rec').setAttribute('aria-label', 'Stop recording');
@@ -549,7 +586,7 @@ document.addEventListener('keydown', e => {
 let wakeLock = null;
 async function keepAwake(){ try { if (!wakeLock || wakeLock.released) wakeLock = await navigator.wakeLock?.request('screen'); } catch {} }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') keepAwake();
+  if (document.visibilityState === 'visible') { keepAwake(); audioCtx?.resume().catch(() => {}); }
   else if (mode === 'rec') stopRec();
 });
 
