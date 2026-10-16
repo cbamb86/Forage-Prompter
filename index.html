@@ -206,6 +206,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <!-- Start / errors -->
 <div class="overlay" id="splash">
   <h1>Forage Prompter</h1>
+  <p id="ver" style="font-size:12px"></p>
   <p>Record 9:16 videos for TikTok and Instagram Reels while your script scrolls just under the camera.</p>
   <button class="btn" id="start">Start camera</button>
   <p id="errMsg" style="color:#ff8a80" hidden></p>
@@ -227,6 +228,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script>
 (() => {
 'use strict';
+const VERSION = 'v8';
 const $ = s => document.querySelector(s);
 const store = {
   get(k, d){ try { const v = localStorage.getItem('fp.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -384,7 +386,7 @@ function useDirect(){
   const w = video.videoWidth, h = video.videoHeight;
   return !!(w && h) && Math.abs(h / w - 16 / 9) < 0.06;
 }
-let direct = false;
+let direct = false, camPauses = 0;
 function loop(now){
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
   if (mode !== 'rec') direct = useDirect();
@@ -437,6 +439,11 @@ function startRec(){
   if (mime === null) { alertMsg('This browser cannot record video. Use Safari on iPhone or Chrome on Android.'); mode = 'idle'; return; }
   direct = useDirect();
   const isDirect = direct;
+  // Direct mode records the raw mic, so pause the meter's audio engine: on iOS it can stall the camera.
+  if (isDirect) audioCtx?.suspend().catch(() => {});
+  camPauses = 0;
+  const vt = camStream.getVideoTracks()[0];
+  if (vt) { vt.onmute = () => { camPauses++; }; }
   let out;
   if (isDirect) out = new MediaStream([...camStream.getVideoTracks(), ...camStream.getAudioTracks()]);
   else { out = canvas.captureStream(30); recAudioTracks().forEach(t => out.addTrack(t)); }
@@ -454,6 +461,7 @@ function startRec(){
     lastBlob = new Blob(chunks, { type });
     showReview((performance.now() - recStart) / 1000, recW, recH);
   };
+  isDirectLast = isDirect;
   recorder.start();
   recStart = performance.now();
   mode = 'rec'; body.classList.add('rec');
@@ -463,6 +471,7 @@ function startRec(){
 }
 
 function stopRec(){
+  audioCtx?.resume().catch(() => {});
   if (mode !== 'rec') return;
   clearTimeout(endTimer); endTimer = null;
   mode = 'idle'; body.classList.remove('rec');
@@ -479,12 +488,13 @@ function fileName(){
   const ext = lastBlob.type.includes('mp4') ? 'mp4' : 'webm';
   return `forage-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
 }
+let isDirectLast = false;
 function showReview(sec, w, h){
   if (lastUrl) URL.revokeObjectURL(lastUrl);
   lastUrl = URL.createObjectURL(lastBlob);
   const v = $('#playback'); v.muted = false; v.loop = true; v.src = lastUrl;
   v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-  $('#reviewMeta').textContent = `${fmt(sec)} · ${(lastBlob.size / 1048576).toFixed(1)} MB · ${lastBlob.type.includes('mp4') ? 'MP4' : 'WebM'} · ${w}×${h}`;
+  $('#reviewMeta').textContent = `${fmt(sec)} · ${(lastBlob.size / 1048576).toFixed(1)} MB · ${lastBlob.type.includes('mp4') ? 'MP4' : 'WebM'} · ${w}×${h} · ${isDirectLast ? 'direct' : 'canvas'}${camPauses ? ' · camera paused ' + camPauses + '×' : ''} · ${VERSION}`;
   const note = $('#reviewNote');
   note.hidden = lastBlob.type.includes('mp4');
   note.textContent = 'This browser saved WebM. Instagram does not accept WebM: use Safari on iPhone or an up-to-date Chrome on Android to get MP4.';
@@ -620,6 +630,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('resize', measure);
 document.fonts?.ready.then(measure);
 
+$('#ver').textContent = VERSION;
 sizeCanvas(); syncUI(); renderText(); keepAwake();
 requestAnimationFrame(loop);
 })();
