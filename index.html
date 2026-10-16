@@ -113,9 +113,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .chip.bad{color:#ff8a80;border-color:#6b2a26}
 
 /* Review: video takes whatever height is left; buttons are always on screen. */
-#review{display:grid;grid-template-rows:minmax(0,1fr) auto auto auto;justify-items:center;align-content:stretch;gap:12px;
+#review{display:flex;flex-direction:column;justify-content:flex-start;align-items:center;gap:12px;overflow-y:auto;
   padding-top:max(14px,env(safe-area-inset-top,0px));padding-bottom:max(14px,env(safe-area-inset-bottom,0px))}
-#review video{height:100%;width:100%;min-height:0;object-fit:contain;background:#000;border-radius:14px}
+/* Explicit height: iOS Safari ignores percentage heights on <video> and lets it cover the buttons. */
+#review video{flex:none;display:block;width:100%;max-width:480px;object-fit:contain;background:#000;border-radius:14px;
+  height:calc(100vh - 240px);height:calc(100dvh - 210px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
+#review .meta,#review .note,#review .btns{position:relative;z-index:2;flex:none}
 #review .btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:420px}
 #review #shareBtn{grid-column:1/-1;padding-block:16px;font-size:17px}
 #review .meta{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -465,7 +468,8 @@ function fileName(){
 function showReview(sec){
   if (lastUrl) URL.revokeObjectURL(lastUrl);
   lastUrl = URL.createObjectURL(lastBlob);
-  const v = $('#playback'); v.src = lastUrl;
+  const v = $('#playback'); v.muted = false; v.loop = true; v.src = lastUrl;
+  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
   $('#reviewMeta').textContent = `${fmt(sec)} · ${(lastBlob.size / 1048576).toFixed(1)} MB · ${lastBlob.type.includes('mp4') ? 'MP4' : 'WebM'} · ${canvas.width}×${canvas.height}`;
   const note = $('#reviewNote');
   note.hidden = lastBlob.type.includes('mp4');
@@ -485,7 +489,7 @@ $('#shareBtn').onclick = async () => {
 };
 $('#dlBtn').onclick = download;
 $('#retake').onclick = () => {
-  const v = $('#playback'); v.pause(); v.removeAttribute('src'); v.load();
+  const v = $('#playback'); v.pause(); v.loop = false; v.removeAttribute('src'); v.load();
   $('#review').hidden = true; resetScroll();
 };
 
