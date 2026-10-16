@@ -294,7 +294,9 @@ function resetScroll(){ y = 0; setScrolling(false); applyY(); }
 function fmt(sec){ sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
 function estSeconds(){ return countWords(cur().text) / S.wpm * 60; }
 
+let msgUntil = 0;
 function updateStatus(now){
+  if (now < msgUntil) return;
   if (mode === 'rec') statusText.textContent = fmt((now - recStart) / 1000);
   else statusText.textContent = '~' + fmt(estSeconds()) + ' script';
 }
@@ -427,9 +429,11 @@ function startRec(){
   } catch (e) { alertMsg('Recording failed to start: ' + e.message); mode = 'idle'; return; }
   chunks = [];
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onerror = e => alertMsg('Recording error: ' + (e.error?.message || 'unknown'));
   recorder.onstop = () => {
     out.getVideoTracks().forEach(t => t.stop());
     const type = (recorder.mimeType || mime || 'video/webm').split(';')[0];
+    if (!chunks.length) { alertMsg('Recording failed: no video data. Close and reopen the app, then try again.'); return; }
     lastBlob = new Blob(chunks, { type });
     showReview((performance.now() - recStart) / 1000);
   };
@@ -450,7 +454,7 @@ function stopRec(){
   if (recorder && recorder.state !== 'inactive') recorder.stop();
 }
 
-function alertMsg(m){ statusText.textContent = m; }
+function alertMsg(m){ statusText.textContent = m; msgUntil = performance.now() + 8000; }
 
 // ---------- review ----------
 function fileName(){
