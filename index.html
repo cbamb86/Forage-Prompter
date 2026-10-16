@@ -112,7 +112,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .chip.warn{color:var(--accent);border-color:#6a4d1d}
 .chip.bad{color:#ff8a80;border-color:#6b2a26}
 
-#review video{width:min(100%,56.25dvh * .78);aspect-ratio:9/16;max-height:68dvh;background:#000;border-radius:14px}
+/* Review: video takes whatever height is left; buttons are always on screen. */
+#review{display:grid;grid-template-rows:minmax(0,1fr) auto auto auto;justify-items:center;align-content:stretch;gap:12px;
+  padding-top:max(14px,env(safe-area-inset-top,0px));padding-bottom:max(14px,env(safe-area-inset-bottom,0px))}
+#review video{height:100%;width:100%;min-height:0;object-fit:contain;background:#000;border-radius:14px}
+#review .btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:420px}
+#review #shareBtn{grid-column:1/-1;padding-block:16px;font-size:17px}
 #review .meta{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 #review .note{font-size:13px;color:var(--accent);max-width:40ch}
 
