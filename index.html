@@ -32,9 +32,8 @@ button{cursor:pointer;border:0;background:none}
   height:min(100vh,177.78vw);width:min(100vw,56.25vh);
   height:min(100dvh,177.78vw);width:min(100vw,56.25dvh);
   background:#000;overflow:hidden}
-#cam{position:absolute;inset:0;width:100%;height:100%;display:block}
-#cam.mirror{transform:scaleX(-1)}
-#src{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#src,#cam{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover}
+#src.mirror,#cam.mirror{transform:scaleX(-1)}
 
 /* Teleprompter */
 #prompt{position:absolute;left:10px;right:10px;top:calc(max(env(safe-area-inset-top,0px),8px) + 4px);
@@ -319,7 +318,7 @@ async function startCamera(){
   camStream?.getTracks().forEach(t => t.stop());
   try {
     camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: S.facing, width:{ ideal:1920 }, height:{ ideal:1080 }, frameRate:{ ideal:30 } },
+      video: { facingMode: S.facing, width:{ ideal: S.res == 720 ? 1280 : 1920 }, height:{ ideal: S.res == 720 ? 720 : 1080 }, frameRate:{ ideal:30 } },
       audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
     });
   } catch (e) {
@@ -333,6 +332,7 @@ async function startCamera(){
   try { await video.play(); } catch {}
   setupAudio();
   canvas.classList.toggle('mirror', S.facing === 'user');
+  video.classList.toggle('mirror', S.facing === 'user');
   return true;
 }
 
@@ -378,9 +378,19 @@ function drawFrame(){
   } else ctx.drawImage(video, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
 }
 
+// Record the camera directly when it already delivers 9:16 (iPhone held upright). The canvas route is
+// only a fallback: iOS throttles it, which froze the picture after ~10 s while the sound carried on.
+function useDirect(){
+  const w = video.videoWidth, h = video.videoHeight;
+  return !!(w && h) && Math.abs(h / w - 16 / 9) < 0.06;
+}
+let direct = false;
 function loop(now){
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
-  drawFrame();
+  if (mode !== 'rec') direct = useDirect();
+  canvas.hidden = direct;
+  if (video.paused && camStream) video.play().catch(() => {});
+  if (!direct) drawFrame();
   drawMeter();
   if (scrolling && !dragging) {
     y += (textH / words) * (S.wpm / 60) * dt;
@@ -425,8 +435,12 @@ async function onRecButton(){
 function startRec(){
   const mime = pickMime();
   if (mime === null) { alertMsg('This browser cannot record video. Use Safari on iPhone or Chrome on Android.'); mode = 'idle'; return; }
-  const out = canvas.captureStream(30);
-  recAudioTracks().forEach(t => out.addTrack(t));
+  direct = useDirect();
+  const isDirect = direct;
+  let out;
+  if (isDirect) out = new MediaStream([...camStream.getVideoTracks(), ...camStream.getAudioTracks()]);
+  else { out = canvas.captureStream(30); recAudioTracks().forEach(t => out.addTrack(t)); }
+  const recW = isDirect ? video.videoWidth : canvas.width, recH = isDirect ? video.videoHeight : canvas.height;
   try {
     recorder = new MediaRecorder(out, Object.assign(mime ? { mimeType: mime } : {}, { videoBitsPerSecond: S.res == 720 ? 5e6 : 8e6, audioBitsPerSecond: 128e3 }));
   } catch (e) { alertMsg('Recording failed to start: ' + e.message); mode = 'idle'; return; }
@@ -434,11 +448,11 @@ function startRec(){
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onerror = e => alertMsg('Recording error: ' + (e.error?.message || 'unknown'));
   recorder.onstop = () => {
-    out.getVideoTracks().forEach(t => t.stop());
+    if (!isDirect) out.getVideoTracks().forEach(t => t.stop()); // never stop the live camera
     const type = (recorder.mimeType || mime || 'video/webm').split(';')[0];
     if (!chunks.length) { alertMsg('Recording failed: no video data. Close and reopen the app, then try again.'); return; }
     lastBlob = new Blob(chunks, { type });
-    showReview((performance.now() - recStart) / 1000);
+    showReview((performance.now() - recStart) / 1000, recW, recH);
   };
   recorder.start();
   recStart = performance.now();
@@ -465,12 +479,12 @@ function fileName(){
   const ext = lastBlob.type.includes('mp4') ? 'mp4' : 'webm';
   return `forage-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
 }
-function showReview(sec){
+function showReview(sec, w, h){
   if (lastUrl) URL.revokeObjectURL(lastUrl);
   lastUrl = URL.createObjectURL(lastBlob);
   const v = $('#playback'); v.muted = false; v.loop = true; v.src = lastUrl;
   v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-  $('#reviewMeta').textContent = `${fmt(sec)} · ${(lastBlob.size / 1048576).toFixed(1)} MB · ${lastBlob.type.includes('mp4') ? 'MP4' : 'WebM'} · ${canvas.width}×${canvas.height}`;
+  $('#reviewMeta').textContent = `${fmt(sec)} · ${(lastBlob.size / 1048576).toFixed(1)} MB · ${lastBlob.type.includes('mp4') ? 'MP4' : 'WebM'} · ${w}×${h}`;
   const note = $('#reviewNote');
   note.hidden = lastBlob.type.includes('mp4');
   note.textContent = 'This browser saved WebM. Instagram does not accept WebM: use Safari on iPhone or an up-to-date Chrome on Android to get MP4.';
