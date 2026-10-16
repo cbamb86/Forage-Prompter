@@ -229,7 +229,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script>
 (() => {
 'use strict';
-const VERSION = 'v10';
+const VERSION = 'v11';
 const $ = s => document.querySelector(s);
 const store = {
   get(k, d){ try { const v = localStorage.getItem('fp.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -606,7 +606,7 @@ $('#wpm').oninput = e => { S.wpm = +e.target.value; save(); syncUI(); };
 $('#fs').oninput = e => { S.fs = +e.target.value; save(); syncUI(); measure(); };
 $('#ph').oninput = e => { S.ph = +e.target.value; save(); syncUI(); measure(); };
 $('#countdown').onchange = e => { S.countdown = +e.target.value; save(); };
-$('#res').onchange = e => { S.res = +e.target.value; save(); sizeCanvas(); };
+$('#res').onchange = async e => { S.res = +e.target.value; save(); sizeCanvas(); if (camStream && mode === 'idle') await startCamera(); };
 $('#guidesT').onchange = e => { S.guides = e.target.checked; save(); syncUI(); };
 $('#endStop').onchange = e => { S.endStop = e.target.checked; save(); };
 $('#mirrorT').onchange = e => { S.mirrorText = e.target.checked; save(); applyY(); };
