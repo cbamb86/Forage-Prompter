@@ -207,6 +207,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <div class="overlay" id="splash">
   <h1>Forage Prompter</h1>
   <p id="ver" style="font-size:12px"></p>
+  <button class="btn ghost" id="updateBtn" hidden>New version available: tap to load</button>
   <p>Record 9:16 videos for TikTok and Instagram Reels while your script scrolls just under the camera.</p>
   <button class="btn" id="start">Start camera</button>
   <p id="errMsg" style="color:#ff8a80" hidden></p>
@@ -228,7 +229,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script>
 (() => {
 'use strict';
-const VERSION = 'v9';
+const VERSION = 'v10';
 const $ = s => document.querySelector(s);
 const store = {
   get(k, d){ try { const v = localStorage.getItem('fp.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -319,19 +320,25 @@ async function startCamera(){
   }
   camStream?.getTracks().forEach(t => t.stop());
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({
+    // iOS can leave getUserMedia hanging (e.g. camera still held by an old copy of the app), so time it out.
+    const req = navigator.mediaDevices.getUserMedia({
       video: { facingMode: S.facing, width:{ ideal: S.res == 720 ? 1280 : 1920 }, height:{ ideal: S.res == 720 ? 720 : 1080 }, frameRate:{ ideal:30 } },
       audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
     });
+    let timedOut = false;
+    camStream = await Promise.race([req, sleep(8000).then(() => { timedOut = true; throw Object.assign(new Error('timeout'), { name:'Timeout' }); })]);
+    req.then(st => { if (timedOut) st.getTracks().forEach(t => t.stop()); }).catch(() => {});
   } catch (e) {
     camStream = null;
     err.textContent = e.name === 'NotAllowedError'
       ? 'Camera or microphone access was blocked. Allow both in your browser settings for this site, then try again.'
+      : e.name === 'Timeout'
+      ? 'The camera did not respond. Swipe this app away (and close any other app using the camera), then open it again.'
       : 'Could not start the camera (' + (e.message || e.name) + ').';
     err.hidden = false; return false;
   }
   video.srcObject = camStream;
-  try { await video.play(); } catch {}
+  video.play().catch(() => {});
   if (audioCtx) setupAudio(); // only rebuilt if the canvas fallback already needed it
   canvas.classList.toggle('mirror', S.facing === 'user');
   video.classList.toggle('mirror', S.facing === 'user');
@@ -612,7 +619,18 @@ $('#flip').onclick = async () => {
   await startCamera();
 };
 $('#rec').onclick = onRecButton;
-$('#start').onclick = async () => { if (await startCamera()) $('#splash').hidden = true; };
+$('#start').onclick = async () => {
+  const b = $('#start'); if (b.disabled) return;
+  b.disabled = true; b.textContent = 'Starting camera…';
+  const ok = await startCamera();
+  b.disabled = false; b.textContent = ok ? 'Start camera' : 'Try again';
+  if (ok) $('#splash').hidden = true;
+};
+// Phones may keep an old copy for 10 min; check for a newer version and offer a reload.
+fetch(location.pathname + '?v=' + Date.now(), { cache:'no-store' }).then(r => r.text()).then(t => {
+  const m = t.match(/const VERSION = '([^']+)'/);
+  if (m && m[1] !== VERSION) { const u = $('#updateBtn'); u.hidden = false; u.onclick = () => location.replace(location.pathname + '?v=' + Date.now()); }
+}).catch(() => {});
 
 document.addEventListener('keydown', e => {
   if (e.target.matches('textarea,input,select')) return;
