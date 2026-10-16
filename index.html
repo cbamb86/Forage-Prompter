@@ -142,7 +142,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div id="count" hidden></div>
 
   <div id="controls">
-    <div id="status"><span class="dot"></span><span id="statusText">0:00</span><span id="meter" title="Microphone level"><i></i></span></div>
+    <div id="status"><span class="dot"></span><span id="statusText">0:00</span><span id="meter" title="Microphone level" hidden><i></i></span></div>
     <div class="quick hide-rec-not">
       <div class="pill" title="Reading speed">
         <button id="wpmDown" aria-label="Slower">−</button><output id="wpmOut">150 wpm</output><button id="wpmUp" aria-label="Faster">+</button>
@@ -228,7 +228,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script>
 (() => {
 'use strict';
-const VERSION = 'v8';
+const VERSION = 'v9';
 const $ = s => document.querySelector(s);
 const store = {
   get(k, d){ try { const v = localStorage.getItem('fp.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -332,7 +332,7 @@ async function startCamera(){
   }
   video.srcObject = camStream;
   try { await video.play(); } catch {}
-  setupAudio();
+  if (audioCtx) setupAudio(); // only rebuilt if the canvas fallback already needed it
   canvas.classList.toggle('mirror', S.facing === 'user');
   video.classList.toggle('mirror', S.facing === 'user');
   return true;
@@ -343,6 +343,7 @@ let audioCtx = null, micSrc = null, micDest = null, analyser = null, level = 0;
 const meterBuf = new Uint8Array(512);
 function setupAudio(){
   const tracks = camStream ? camStream.getAudioTracks() : [];
+  $('#meter').hidden = false;
   $('#meter').classList.toggle('off', !tracks.length);
   if (!tracks.length) return;
   try {
@@ -419,7 +420,9 @@ async function onRecButton(){
   if (mode === 'rec') return stopRec();
   if (mode === 'count') { mode = 'idle'; body.classList.remove('count'); $('#count').hidden = true; return; }
   if (!camStream) return;
-  if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume().catch(() => {}); // called inside the tap
+  // Canvas fallback only: route the mic through Web Audio (Safari drops a raw mic track on a canvas stream).
+  // Direct recording never creates an AudioContext: on iOS it stalls the camera mid-recording.
+  if (!useDirect()) { if (!audioCtx) setupAudio(); if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume().catch(() => {}); }
   closeSheet();
   resetScroll();
   if (+S.countdown > 0) {
@@ -439,8 +442,6 @@ function startRec(){
   if (mime === null) { alertMsg('This browser cannot record video. Use Safari on iPhone or Chrome on Android.'); mode = 'idle'; return; }
   direct = useDirect();
   const isDirect = direct;
-  // Direct mode records the raw mic, so pause the meter's audio engine: on iOS it can stall the camera.
-  if (isDirect) audioCtx?.suspend().catch(() => {});
   camPauses = 0;
   const vt = camStream.getVideoTracks()[0];
   if (vt) { vt.onmute = () => { camPauses++; }; }
@@ -449,7 +450,7 @@ function startRec(){
   else { out = canvas.captureStream(30); recAudioTracks().forEach(t => out.addTrack(t)); }
   const recW = isDirect ? video.videoWidth : canvas.width, recH = isDirect ? video.videoHeight : canvas.height;
   try {
-    recorder = new MediaRecorder(out, Object.assign(mime ? { mimeType: mime } : {}, { videoBitsPerSecond: S.res == 720 ? 5e6 : 8e6, audioBitsPerSecond: 128e3 }));
+    recorder = new MediaRecorder(out, Object.assign(mime ? { mimeType: mime } : {}, isDirect ? {} : { videoBitsPerSecond: S.res == 720 ? 5e6 : 8e6, audioBitsPerSecond: 128e3 }));
   } catch (e) { alertMsg('Recording failed to start: ' + e.message); mode = 'idle'; return; }
   chunks = [];
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -471,7 +472,6 @@ function startRec(){
 }
 
 function stopRec(){
-  audioCtx?.resume().catch(() => {});
   if (mode !== 'rec') return;
   clearTimeout(endTimer); endTimer = null;
   mode = 'idle'; body.classList.remove('rec');
